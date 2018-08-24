@@ -24,6 +24,7 @@
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/tlv.h>
+#include <linux/gpio/consumer.h>
 
 #define LPASS_CDC_CLK_RX_RESET_CTL		(0x000)
 #define LPASS_CDC_CLK_TX_RESET_B1_CTL		(0x004)
@@ -203,6 +204,7 @@
 
 struct msm8916_wcd_digital_priv {
 	struct clk *ahbclk, *mclk;
+	struct gpio_desc *sdmode;
 };
 
 static const unsigned long rx_gain_reg[] = {
@@ -351,6 +353,18 @@ static int msm8916_wcd_digital_enable_interpolator(
 			      snd_soc_read(codec, rx_gain_reg[w->shift]));
 		break;
 	}
+	return 0;
+}
+
+static int msm8916_wcd_digital_mute(struct snd_soc_dai *codec_dai, int mute)
+{
+	struct snd_soc_codec *codec = codec_dai->codec;
+	struct msm8916_wcd_digital_priv *msm8916_wcd;
+
+	msm8916_wcd = snd_soc_codec_get_drvdata(codec);
+
+	gpiod_set_value(msm8916_wcd->sdmode, !mute);
+
 	return 0;
 }
 
@@ -576,6 +590,11 @@ static int msm8916_wcd_digital_codec_probe(struct snd_soc_codec *codec)
 {
 	struct msm8916_wcd_digital_priv *priv = dev_get_drvdata(codec->dev);
 
+	priv->sdmode = devm_gpiod_get_optional(codec->dev, "sdmode", GPIOD_OUT_LOW);
+	if (IS_ERR(priv->sdmode)) {
+		return PTR_ERR(priv->sdmode);
+	}
+
 	snd_soc_codec_set_drvdata(codec, priv);
 
 	return 0;
@@ -791,20 +810,29 @@ static int msm8916_wcd_digital_startup(struct snd_pcm_substream *substream,
 		dev_err(codec->dev, "Invalid mclk rate %ld\n", mclk_rate);
 		break;
 	}
+	//gpiod_set_value(msm8916_wcd->sdmode, 1);
 	return 0;
 }
 
 static void msm8916_wcd_digital_shutdown(struct snd_pcm_substream *substream,
 					 struct snd_soc_dai *dai)
 {
+	struct snd_soc_codec *codec = dai->codec;
+	struct msm8916_wcd_digital_priv *msm8916_wcd;
+
+	msm8916_wcd = snd_soc_codec_get_drvdata(codec);
+	//gpiod_set_value(msm8916_wcd->sdmode, 0);
+
 	snd_soc_update_bits(dai->codec, LPASS_CDC_CLK_PDM_CTL,
 			    LPASS_CDC_CLK_PDM_CTL_PDM_CLK_SEL_MASK, 0);
+
 }
 
 static struct snd_soc_dai_ops msm8916_wcd_digital_dai_ops = {
 	.startup = msm8916_wcd_digital_startup,
 	.shutdown = msm8916_wcd_digital_shutdown,
 	.hw_params = msm8916_wcd_digital_hw_params,
+	.digital_mute = msm8916_wcd_digital_mute,
 };
 
 static struct snd_soc_dai_driver msm8916_wcd_digital_dai[] = {
